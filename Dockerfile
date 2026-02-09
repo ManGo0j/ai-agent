@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
 
 # Копируем и устанавливаем зависимости Python
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt
 
 # Копируем весь проект
 COPY . .

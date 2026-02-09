@@ -13,6 +13,7 @@ from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
+# Исправленные импорты для SQLAlchemy 2.0
 from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -33,10 +34,9 @@ DOCS_DIR = os.path.join(BASE_DIR, "docs")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://accountant_qdrant:6333")
 DATABASE_URL = os.getenv("DATABASE_URL")
 COLLECTION_NAME = "knowledge_base"
-MODEL_NAME = "all-MiniLM-L6-v2" # Легкая и быстрая модель
+MODEL_NAME = "all-MiniLM-L6-v2" 
 
-# Настройки разбиения текста (ОПТИМИЗИРОВАНО)
-# Увеличили размер, чтобы таблицы и списки не разрывались
+# Настройки разбиения текста
 CHUNK_SIZE = 2000 
 CHUNK_OVERLAP = 300 
 
@@ -45,17 +45,18 @@ qdrant_client = QdrantClient(url=QDRANT_URL)
 model = SentenceTransformer(MODEL_NAME)
 engine = create_async_engine(DATABASE_URL)
 
+# Правильное создание фабрики асинхронных сессий
 AsyncSessionLocal = async_sessionmaker(
     bind=engine, 
     class_=AsyncSession, 
     expire_on_commit=False
 )
 
-# Инициализируем умный сплиттер один раз
+# Инициализируем умный сплиттер
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,
     chunk_overlap=CHUNK_OVERLAP,
-    separators=["\n\n", "\n", " ", ""] # Приоритет разрыва: абзац -> строка -> пробел
+    separators=["\n\n", "\n", " ", ""]
 )
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
@@ -91,23 +92,24 @@ def extract_text_from_pdf(file_path: str) -> str:
         print(f"Ошибка чтения PDF {file_path}: {e}")
         return ""
 
-
-
 async def process_files():
     """Основная функция обработки документов."""
     
     # 1. Проверка/Создание коллекции в Qdrant
-    if not qdrant_client.collection_exists(COLLECTION_NAME):
-        qdrant_client.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE)
-        )
-        print(f"✅ Создана коллекция Qdrant: {COLLECTION_NAME}")
+    try:
+        if not qdrant_client.collection_exists(COLLECTION_NAME):
+            qdrant_client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE)
+            )
+            print(f"✅ Создана коллекция Qdrant: {COLLECTION_NAME}")
+    except Exception as e:
+        print(f"❌ Ошибка подключения к Qdrant: {e}")
+        return
 
-    # 2. Поиск всех файлов (добавлен RTF)
+    # 2. Поиск всех файлов
     files = []
-    # Расширенный список форматов
-    extensions = ['*.pdf', '*.docx', '*.doc', '*.rtf', '*.txt']
+    extensions = ['*.pdf', '*.docx', '*.doc', '*.txt']
     for ext in extensions:
         files.extend(glob.glob(os.path.join(DOCS_DIR, ext)))
 
@@ -123,7 +125,7 @@ async def process_files():
             file_name = os.path.basename(file_path)
             
             try:
-                # Проверка хеша (защита от повторной загрузки)
+                # Проверка хеша
                 file_hash = get_file_hash(file_path)
                 result = await session.execute(
                     select(AdminDocument).where(AdminDocument.file_hash == file_hash)
@@ -134,25 +136,25 @@ async def process_files():
 
                 print(f"📂 Обработка: {file_name}...")
 
-                # Определение типа и чтение текста
-                text = ""
+                # Чтение текста
+                text_content = ""
                 doc_type = "документ"
                 
                 if file_path.lower().endswith('.pdf'):
-                    text = extract_text_from_pdf(file_path)
-                    doc_type = "скан/pdf"
-                elif file_path.lower().endswith('.docx') or file_path.lower().endswith('.doc'):
-                    text = extract_text_from_docx(file_path)
-                    doc_type = "документ Word"
+                    text_content = extract_text_from_pdf(file_path)
+                    doc_type = "scan/pdf"
+                elif file_path.lower().endswith(('.docx', '.doc')):
+                    text_content = extract_text_from_docx(file_path)
+                    doc_type = "word"
                 elif file_path.lower().endswith('.txt'):
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        text = f.read()
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        text_content = f.read()
 
-                if not text.strip():
+                if not text_content.strip():
                     print(f"⚠️ Файл {file_name} пуст или не прочитан.")
                     continue
 
-                # Создание записи о документе в Postgres
+                # Создание записи о документе
                 db_doc = AdminDocument(
                     document_name=file_name,
                     file_path=file_path,
@@ -161,19 +163,16 @@ async def process_files():
                     upload_date=datetime.utcnow()
                 )
                 session.add(db_doc)
-                await session.flush() # Получаем ID документа
+                await session.flush() 
 
-                # 4. Умный Чанкинг
-                chunks = text_splitter.split_text(text)
-                
-                # Генерация векторов (эмбеддингов)
+                # 4. Чанкинг и Эмбеддинги
+                chunks = text_splitter.split_text(text_content)
                 embeddings = model.encode(chunks)
 
                 points = []
                 for i, (chunk_text, vector) in enumerate(zip(chunks, embeddings)):
                     point_id = str(uuid.uuid4())
                     
-                    # Сохраняем текст чанка в Postgres
                     db_chunk = DocumentChunk(
                         document_id=db_doc.id,
                         chunk_index=i,
@@ -182,31 +181,30 @@ async def process_files():
                     )
                     session.add(db_chunk)
 
-                    # Готовим вектор для Qdrant
                     points.append(models.PointStruct(
                         id=point_id,
                         vector=vector.tolist(),
                         payload={
                             "document_id": db_doc.id,
                             "document_name": file_name,
-                            "type": doc_type,
-                            "text": chunk_text # Дублируем текст в payload для быстрого доступа
+                            "text": chunk_text
                         }
                     ))
 
-                # 5. Загрузка в Qdrant пачками
+                # 5. Загрузка в Qdrant
                 if points:
-                    batch_size = 100
-                    for k in range(0, len(points), batch_size):
-                        batch = points[k : k + batch_size]
-                        qdrant_client.upsert(collection_name=COLLECTION_NAME, points=batch)
+                    for k in range(0, len(points), 100):
+                        qdrant_client.upsert(
+                            collection_name=COLLECTION_NAME, 
+                            points=points[k : k + 100]
+                        )
                 
                 await session.commit()
-                print(f"✅ Успешно: {file_name} (создано {len(chunks)} фрагментов)")
+                print(f"✅ Успешно: {file_name} (создано {len(chunks)} чанков)")
 
             except Exception as e:
                 await session.rollback()
-                print(f"❌ Критическая ошибка с файлом {file_name}: {str(e)}")
+                print(f"❌ Ошибка с файлом {file_name}: {str(e)}")
                 continue
 
 if __name__ == "__main__":
