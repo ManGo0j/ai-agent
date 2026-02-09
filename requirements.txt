@@ -1,0 +1,10 @@
+aiogram
+sqlalchemy
+asyncpg
+python-dotenv
+sentence-transformers
+qdrant-client
+pdfplumber
+python-docx
+openai
+langchain-text-splitters

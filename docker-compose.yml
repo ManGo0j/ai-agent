@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # Реляционная БД
+  db:
+    image: postgres:15-alpine
+    container_name: accountant_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Векторная БД
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: accountant_qdrant
+    restart: always
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  # Наш Telegram бот
+  bot:
+    build: .
+    container_name: accountant_bot
+    restart: always
+    depends_on:
+      - db
+      - qdrant
+    env_file:
+      - .env
+    volumes:
+      - ./docs:/app/docs
+      - ./logs:/app/logs
+    # Эта настройка позволяет боту дождаться запуска БД перед стартом
+    command: >
+      sh -c "python init_db.py && python main.py"
+
+volumes:
+  postgres_data:
+  qdrant_data:
