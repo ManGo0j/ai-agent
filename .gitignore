@@ -1,2 +1,3 @@
 .env
-.docx
+*.docx
+project_context.txt
