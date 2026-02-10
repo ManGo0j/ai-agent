@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+from fastembed import SparseTextEmbedding
 
 # Исправленные импорты для SQLAlchemy 2.0
 from sqlalchemy import select, text
@@ -100,11 +101,25 @@ async def process_files():
         if not qdrant_client.collection_exists(COLLECTION_NAME):
             qdrant_client.create_collection(
                 collection_name=COLLECTION_NAME,
-                vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE)
+                # Конфигурация обычных векторов (смысловой поиск)
+                vectors_config=models.VectorParams(
+                    size=384, 
+                    distance=models.Distance.COSINE
+                ),
+                # Конфигурация разреженных векторов (поиск по ключевым словам)
+                sparse_vectors_config={
+                    "sparse-text": models.SparseVectorParams(
+                        index=models.SparseIndexParams(
+                            on_disk=False,
+                        )
+                    )
+                }
             )
-            print(f"✅ Создана коллекция Qdrant: {COLLECTION_NAME}")
+            print(f"✅ Создана гибридная коллекция Qdrant: {COLLECTION_NAME}")
+        else:
+            print(f"ℹ️ Коллекция {COLLECTION_NAME} уже существует.")
     except Exception as e:
-        print(f"❌ Ошибка подключения к Qdrant: {e}")
+        print(f"❌ Ошибка подключения к Qdrant или создания коллекции: {e}")
         return
 
     # 2. Поиск всех файлов

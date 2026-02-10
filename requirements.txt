@@ -4,6 +4,7 @@ asyncpg
 python-dotenv
 sentence-transformers
 qdrant-client
+fastembed
 pdfplumber
 python-docx
 openai
