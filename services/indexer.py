@@ -40,8 +40,8 @@ COLLECTION_NAME = "knowledge_base"
 MODEL_NAME = "all-MiniLM-L6-v2"
 
 # Настройки разбиения текста
-CHUNK_SIZE = 1500 
-CHUNK_OVERLAP = 200 
+CHUNK_SIZE = 2000
+CHUNK_OVERLAP = 500
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 qdrant_client = QdrantClient(url=QDRANT_URL)

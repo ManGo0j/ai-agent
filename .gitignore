@@ -3,3 +3,4 @@
 project_context.txt
 all_chunks_debug.txt
 /model_cache
+.venv
