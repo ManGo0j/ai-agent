@@ -165,18 +165,33 @@ async def process_files():
                 session.add(db_doc)
                 await session.flush() 
 
-                # 4. Чанкинг и Эмбеддинги
-                chunks = text_splitter.split_text(text_content)
-                embeddings = model.encode(chunks)
+                # 4. Чанкинг и Эмбеддинги с Контекстуальным Извлечением
+                raw_chunks = text_splitter.split_text(text_content)
+                
+                # Подготовка контекстных чанков
+                contextualized_chunks = []
+                for chunk in raw_chunks:
+                    # Добавляем метаданные прямо в текст чанка перед векторизацией
+                    context_header = (
+                        f"ИСТОЧНИК: {file_name}\n"
+                        f"ТИП ДОКУМЕНТА: {doc_type}\n"
+                        f"--- НАЧАЛО ФРАГМЕНТА ---\n"
+                    )
+                    full_text = context_header + chunk
+                    contextualized_chunks.append(full_text)
+
+                # Генерируем векторы уже для обогащенного текста
+                embeddings = model.encode(contextualized_chunks)
 
                 points = []
-                for i, (chunk_text, vector) in enumerate(zip(chunks, embeddings)):
+                # Используем contextualized_chunks вместо raw_chunks
+                for i, (chunk_text, vector) in enumerate(zip(contextualized_chunks, embeddings)):
                     point_id = str(uuid.uuid4())
                     
                     db_chunk = DocumentChunk(
                         document_id=db_doc.id,
                         chunk_index=i,
-                        chunk_text=chunk_text,
+                        chunk_text=chunk_text, # Сохраняем текст вместе с заголовком
                         embedding_id=point_id
                     )
                     session.add(db_chunk)
@@ -200,7 +215,7 @@ async def process_files():
                         )
                 
                 await session.commit()
-                print(f"✅ Успешно: {file_name} (создано {len(chunks)} чанков)")
+                print(f"✅ Успешно: {file_name} (создано {len(contextualized_chunks)} контекстных чанков)")
 
             except Exception as e:
                 await session.rollback()

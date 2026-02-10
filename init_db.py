@@ -18,7 +18,7 @@ async def init_models():
     
     async with engine.begin() as conn:
         # Удаляем старые таблицы (если нужно для тестов) и создаем новые
-        # await conn.run_sync(Base.metadata.drop_all) 
+        await conn.run_sync(Base.metadata.drop_all) 
         print("Создание таблиц...")
         await conn.run_sync(Base.metadata.create_all)
         print("Таблицы users и conversations созданы успешно.")
