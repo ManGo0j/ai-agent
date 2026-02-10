@@ -36,6 +36,7 @@ services:
     volumes:
       - ./docs:/app/docs
       - ./logs:/app/logs
+      - ./model_cache:/app/model_cache
     # Эта настройка позволяет боту дождаться запуска БД перед стартом
     command: >
       sh -c "python init_db.py && python main.py"
