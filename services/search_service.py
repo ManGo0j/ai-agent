@@ -59,21 +59,25 @@ async def rewrite_query(original_query: str) -> str:
     except Exception:
         return original_query
 
-async def search(query: str) -> List[Dict]:
+async def search(query: str):
     """
-    Улучшенный поиск с пересборкой вопроса и увеличенными лимитами
+    Улучшенный гибридный поиск с пересборкой вопроса и возвратом параметров для логов.
+    Возвращает кортеж: (results: List[Dict], search_query: str)
     """
     # 1. ПЕРЕСБОРКА ВОПРОСА
-    # Это позволяет найти профессиональные статьи по обывательским вопросам
+    # Используем DeepSeek для превращения обывательского вопроса в юридический
     search_query = await rewrite_query(query)
     
     # 2. КОДИРОВАНИЕ
+    # Плотный вектор (Dense)
     query_dense_vector = encoder.encode(search_query).tolist()
+    # Разреженный вектор (Sparse) для поиска по точным совпадениям слов
     query_sparse_embeddings = list(sparse_model.embed([search_query]))
     sparse_emb = query_sparse_embeddings[0]
 
     try:
-        # Увеличиваем лимит prefetch до 40 для большего охвата кандидатов
+        # 3. ГИБРИДНЫЙ ПОИСК В QDRANT
+        # Используем RRF (Reciprocal Rank Fusion) для объединения результатов двух поисков
         search_result = await qdrant_client.query_points(
             collection_name=COLLECTION_NAME,
             prefetch=[
@@ -96,14 +100,14 @@ async def search(query: str) -> List[Dict]:
         )
 
         if not search_result.points:
-            return []
+            return [], search_query
 
-        # 3. ПОДГОТОВКА К ПЕРЕРАНЖИРОВАНИЮ
+        # 4. ПОДГОТОВКА К ПЕРЕРАНЖИРОВАНИЮ
         points = search_result.points
-        # Используем исходный запрос пользователя для финальной сверки релевантности
+        # Для реранкинга используем исходный текст пользователя и тексты из базы
         cross_inp = [[query, hit.payload.get("text")] for hit in points]
 
-        # 4. РЕРАНКИНГ
+        # 5. РЕРАНКИНГ (Cross-Encoder)
         scores = reranker.predict(cross_inp)
         scored_hits = []
         for hit, score in zip(points, scores):
@@ -112,9 +116,10 @@ async def search(query: str) -> List[Dict]:
                 "score": score
             })
 
+        # Сортировка по весам реранкера (от наиболее релевантных к наименее)
         scored_hits.sort(key=lambda x: x["score"], reverse=True)
 
-        # Увеличиваем количество итоговых чанков до 8 для полноты контекста
+        # Отбираем 8 самых качественных фрагментов
         top_hits = scored_hits[:8]
 
         results = []
@@ -122,14 +127,16 @@ async def search(query: str) -> List[Dict]:
             hit = item["hit"]
             results.append({
                 "text": hit.payload.get("text"),
-                "source": hit.payload.get("document_name"),
+                "source": hit.payload.get("document_name"), # Сохраняем имя документа
                 "score": float(item["score"])
             })
         
-        return results
-        
-    except Exception:
-        return []
+        # Возвращаем результаты и пересобранный запрос для модуля аналитики
+        return results, search_query
+
+    except Exception as e:
+        print(f"Ошибка при поиске: {e}")
+        return [], search_query
 
 async def generate_answer(query: str, search_results: List[Dict]) -> str:
     """Генерация ответа с расширенным контекстом"""

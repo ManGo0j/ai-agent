@@ -37,7 +37,8 @@ services:
       - ./docs:/app/docs
       - ./logs:/app/logs
       - ./model_cache:/app/model_cache
-    # Эта настройка позволяет боту дождаться запуска БД перед стартом
+      # Монтируем файл аналитики из корня проекта на хосте в контейнер
+      - ./analitycs.txt:/app/analitycs.txt
     command: >
       sh -c "python init_db.py && python main.py"
 

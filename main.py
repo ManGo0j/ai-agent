@@ -14,11 +14,16 @@ from database.models import Base, User, Conversation
 from services.search_service import search, generate_answer
 from dotenv import load_dotenv
 
+from services.analytics_logger import log_request_details
+from services.indexer import CHUNK_SIZE # Импорт размера чанка
+from services.search_service import search, generate_answer # Убедитесь, что импорт функций корректен
+
 load_dotenv()
 
 # Настройки
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
+EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
@@ -75,7 +80,7 @@ async def cmd_start(message: types.Message):
 
 @dp.message(F.text)
 async def handle_question(message: types.Message):
-    """Обработка текстовых вопросов с RAG-логикой [cite: 21-22]."""
+    """Обработка текстовых вопросов с RAG-логикой и расширенным логированием"""
     user_id = message.from_user.id
 
     # 1. Проверка лимитов
@@ -83,21 +88,22 @@ async def handle_question(message: types.Message):
         await message.answer("⚠️ Вы исчерпали лимит запросов (3 в минуту). Пожалуйста, подождите.")
         return
 
-    # Отправляем статус "печатает", так как ИИ может думать долго
+    # Отправляем статус "печатает"
     await bot.send_chat_action(message.chat.id, "typing")
     
-    # 2. Поиск и генерация
     query = message.text
     try:
-        search_results = await search(query)
+        # 2. Поиск (теперь получаем и результаты, и пересобранный запрос)
+        search_results, rewritten_query = await search(query)
+        
         if not search_results:
             answer = "К сожалению, в моей базе знаний нет информации по вашему вопросу."
         else:
+            # Генерация окончательного ответа
             answer = await generate_answer(query, search_results)
 
-        # 3. Сохранение в БД [cite: 81-82]
+        # 3. Сохранение в БД
         async with async_session() as session:
-            # Находим ID пользователя в нашей БД
             res = await session.execute(select(User.id).where(User.telegram_id == user_id))
             db_user_id = res.scalar()
             
@@ -110,13 +116,28 @@ async def handle_question(message: types.Message):
             session.add(new_conv)
             await session.commit()
 
-        # 4. Отправка ответа
+        # 4. ЛОГИРОВАНИЕ АНАЛИТИКИ (Новый блок)
+        # Записываем все детали процесса в analitycs.txt
+        try:
+            await log_request_details(
+                original_query=query,
+                rewritten_query=rewritten_query,
+                chunks=search_results,
+                final_answer=answer,
+                embedding_model=EMBEDDING_MODEL_NAME,
+                chunk_size=CHUNK_SIZE,                 
+                num_fragments=len(search_results)
+            )
+        except Exception as log_error:
+            logging.error(f"Ошибка при записи аналитики: {log_error}")
+
+        # 5. Отправка ответа пользователю
         await message.answer(answer, parse_mode="HTML")
 
     except Exception as e:
         logging.error(f"Error handling message: {e}")
         await message.answer("Произошла ошибка при обработке запроса. Попробуйте позже.")
-
+        
 async def main():
     logging.info("Бот запущен...")
     await dp.start_polling(bot)
